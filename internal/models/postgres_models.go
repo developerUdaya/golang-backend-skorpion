@@ -55,7 +55,9 @@ func (s *StringArray) Scan(value interface{}) error {
 }
 
 // User model - PostgreSQL (strict, consistent data)
-// Multi-restaurant support: same email/phone can exist across different restaurants
+// Multi-restaurant support:
+// - For customers: same email/phone can exist across different restaurants
+// - For other roles (admin, restaurant_owner, restaurant_staff): email/phone must be globally unique
 type User struct {
 	ID               uuid.UUID  `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
 	Name             string     `gorm:"not null" json:"name"`
@@ -71,8 +73,11 @@ type User struct {
 	RestaurantID     *uuid.UUID `gorm:"type:uuid" json:"restaurant_id"` // Required for customers/restaurant staff, optional for admins
 	Role             string     `gorm:"default:customer" json:"role"`   // customer, restaurant_owner, restaurant_staff, admin
 
-	// Note: Composite unique indexes will be added via migration
-	// Same email/phone can exist across different restaurants but must be unique within a restaurant
+	// Database constraints will be:
+	// 1. Unique index on (email, restaurant_id) for customers
+	// 2. Unique index on (phone, restaurant_id) for customers
+	// 3. Unique index on email for non-customer roles
+	// 4. Unique index on phone for non-customer roles
 }
 
 // Restaurant model - PostgreSQL
@@ -129,9 +134,8 @@ type CommissionToRestaurant struct {
 
 // Cart model - PostgreSQL (transactional data)
 type CartItem struct {
-	ProductID string  `json:"product_id"`
-	Quantity  int     `json:"quantity"`
-	Price     float64 `json:"price"`
+	ProductID string `json:"product_id"`
+	Quantity  int    `json:"quantity"`
 }
 
 type Cart struct {
@@ -338,8 +342,8 @@ type Address struct {
 type OTP struct {
 	ID           uuid.UUID  `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
 	Phone        string     `gorm:"not null" json:"phone"`
-	RestaurantID *uuid.UUID `gorm:"type:uuid;not null" json:"restaurant_id"` // OTP is restaurant-specific
-	OTPCode      string     `gorm:"not null" json:"-"`                       // Don't expose in JSON
+	RestaurantID *uuid.UUID `gorm:"type:uuid" json:"restaurant_id"` // OTP can be restaurant-specific for customers, NULL for admin/staff
+	OTPCode      string     `gorm:"not null" json:"-"`              // Don't expose in JSON
 	ExpiresAt    time.Time  `gorm:"not null" json:"expires_at"`
 	IsUsed       bool       `gorm:"default:false" json:"is_used"`
 	AttemptCount int        `gorm:"default:0" json:"attempt_count"`

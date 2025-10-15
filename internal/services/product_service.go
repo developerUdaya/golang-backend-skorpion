@@ -244,6 +244,108 @@ func (s *ProductService) DeleteProduct(ctx context.Context, productID string, re
 	return nil
 }
 
+type GetProductsRequest struct {
+	RestaurantID  string `json:"restaurant_id" binding:"required"`
+	CategoryID    string `json:"category_id,omitempty"`
+	AvailableOnly bool   `json:"available_only"`
+	Page          int    `json:"page"`
+	Limit         int    `json:"limit"`
+}
+
+type GetProductsResponse struct {
+	Products   []models.Product `json:"products"`
+	Pagination PaginationInfo   `json:"pagination"`
+	TimeInfo   TimeAvailability `json:"time_info"`
+}
+
+type PaginationInfo struct {
+	Page       int   `json:"page"`
+	Limit      int   `json:"limit"`
+	Total      int64 `json:"total"`
+	TotalPages int   `json:"total_pages"`
+}
+
+type TimeAvailability struct {
+	CurrentTime   string `json:"current_time"`
+	CurrentDate   string `json:"current_date"`
+	IsBusinessDay bool   `json:"is_business_day"`
+}
+
+func (s *ProductService) GetProductsByRestaurantCategoryAndTime(ctx context.Context, req *GetProductsRequest) (*GetProductsResponse, error) {
+	// Set default pagination values
+	if req.Page <= 0 {
+		req.Page = 1
+	}
+	if req.Limit <= 0 {
+		req.Limit = 20
+	}
+	if req.Limit > 100 {
+		req.Limit = 100 // Maximum limit
+	}
+
+	offset := (req.Page - 1) * req.Limit
+
+	// Get current time info
+	now := time.Now()
+	currentTime := now.Format("15:04")
+	currentDate := now.Format("2006-01-02")
+
+	// Parse category ID if provided
+	var categoryID *primitive.ObjectID
+	if req.CategoryID != "" {
+		objID, err := primitive.ObjectIDFromHex(req.CategoryID)
+		if err != nil {
+			return nil, errors.New("invalid category ID")
+		}
+		categoryID = &objID
+	}
+
+	// Try cache first
+	cacheKey := fmt.Sprintf("products_filtered:%s:%s:%v:%s:%d:%d",
+		req.RestaurantID, req.CategoryID, req.AvailableOnly, currentTime, req.Limit, offset)
+	var cachedResponse *GetProductsResponse
+	if err := s.cache.Get(ctx, cacheKey, &cachedResponse); err == nil {
+		return cachedResponse, nil
+	}
+
+	// Get products from repository
+	products, total, err := s.productRepo.GetByRestaurantCategoryAndTime(
+		ctx, req.RestaurantID, categoryID, req.AvailableOnly, currentTime, req.Limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	// Calculate total pages
+	totalPages := int((total + int64(req.Limit) - 1) / int64(req.Limit))
+
+	// Build response
+	response := &GetProductsResponse{
+		Products: products,
+		Pagination: PaginationInfo{
+			Page:       req.Page,
+			Limit:      req.Limit,
+			Total:      total,
+			TotalPages: totalPages,
+		},
+		TimeInfo: TimeAvailability{
+			CurrentTime:   currentTime,
+			CurrentDate:   currentDate,
+			IsBusinessDay: isBusinessDay(now),
+		},
+	}
+
+	// Cache for 5 minutes (shorter than other caches due to time sensitivity)
+	s.cache.Set(ctx, cacheKey, response, time.Minute*5)
+
+	return response, nil
+}
+
+// Helper function to determine if current day is a business day
+func isBusinessDay(t time.Time) bool {
+	weekday := t.Weekday()
+	return weekday != time.Saturday && weekday != time.Sunday
+}
+
 func (s *ProductService) clearProductCache(restaurantID string) {
 	// In a real implementation, you'd want to use cache tags or patterns
 	// For now, we'll just clear some common cache patterns

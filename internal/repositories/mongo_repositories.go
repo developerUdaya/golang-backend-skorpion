@@ -149,6 +149,123 @@ func (r *productRepository) GetHighlighted(ctx context.Context, restaurantID str
 	return products, nil
 }
 
+func (r *productRepository) GetByRestaurantCategoryAndTime(ctx context.Context, restaurantID string, categoryID *primitive.ObjectID, availableOnly bool, currentTime string, limit, offset int) ([]models.Product, int64, error) {
+	// Build base filter
+	filter := bson.M{"restaurant_id": restaurantID}
+
+	// Add category filter if provided
+	if categoryID != nil {
+		filter["category_id"] = *categoryID
+	}
+
+	// Add availability filter if requested
+	if availableOnly {
+		filter["is_available"] = true
+	}
+
+	// Get products with time-based filtering
+	pipeline := mongo.Pipeline{
+		// Match basic filters
+		{{Key: "$match", Value: filter}},
+
+		// Lookup time range groups to check if product is available at current time
+		{{Key: "$lookup", Value: bson.D{
+			{Key: "from", Value: "time_range_products_group_items"},
+			{Key: "localField", Value: "_id"},
+			{Key: "foreignField", Value: "product_id"},
+			{Key: "as", Value: "time_groups"},
+		}}},
+
+		// Lookup time group details
+		{{Key: "$lookup", Value: bson.D{
+			{Key: "from", Value: "time_range_products_groups"},
+			{Key: "localField", Value: "time_groups.group_id"},
+			{Key: "foreignField", Value: "_id"},
+			{Key: "as", Value: "group_details"},
+		}}},
+
+		// Add computed field for time availability
+		{{Key: "$addFields", Value: bson.D{
+			{Key: "is_time_available", Value: bson.D{
+				{Key: "$or", Value: []interface{}{
+					// If no time groups, product is always available
+					bson.D{{Key: "$eq", Value: []interface{}{bson.D{{Key: "$size", Value: "$time_groups"}}, 0}}},
+					// Or if current time falls within any active time group
+					bson.D{{Key: "$anyElementTrue", Value: bson.D{
+						{Key: "$map", Value: bson.D{
+							{Key: "input", Value: "$group_details"},
+							{Key: "as", Value: "group"},
+							{Key: "in", Value: bson.D{
+								{Key: "$and", Value: []interface{}{
+									bson.D{{Key: "$eq", Value: []interface{}{"$$group.is_active", true}}},
+									bson.D{{Key: "$lte", Value: []interface{}{"$$group.start_time", currentTime}}},
+									bson.D{{Key: "$gte", Value: []interface{}{"$$group.end_time", currentTime}}},
+								}},
+							}},
+						}},
+					}}},
+				}},
+			}},
+		}}},
+
+		// Filter by time availability
+		{{Key: "$match", Value: bson.D{{Key: "is_time_available", Value: true}}}},
+
+		// Remove temporary fields
+		{{Key: "$project", Value: bson.D{
+			{Key: "time_groups", Value: 0},
+			{Key: "group_details", Value: 0},
+			{Key: "is_time_available", Value: 0},
+		}}},
+
+		// Sort by creation date (newest first)
+		{{Key: "$sort", Value: bson.D{{Key: "created_at", Value: -1}}}},
+	}
+
+	// Get total count for pagination
+	countPipeline := make(mongo.Pipeline, len(pipeline))
+	copy(countPipeline, pipeline)
+	countPipeline = append(countPipeline, bson.D{{Key: "$count", Value: "total"}})
+
+	countCursor, err := r.collection.Aggregate(ctx, countPipeline)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer countCursor.Close(ctx)
+
+	var countResult []bson.M
+	if err = countCursor.All(ctx, &countResult); err != nil {
+		return nil, 0, err
+	}
+
+	var total int64 = 0
+	if len(countResult) > 0 {
+		if count, ok := countResult[0]["total"].(int32); ok {
+			total = int64(count)
+		}
+	}
+
+	// Add pagination to main pipeline
+	pipeline = append(pipeline,
+		bson.D{{Key: "$skip", Value: offset}},
+		bson.D{{Key: "$limit", Value: limit}},
+	)
+
+	// Execute main query
+	cursor, err := r.collection.Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer cursor.Close(ctx)
+
+	var products []models.Product
+	if err = cursor.All(ctx, &products); err != nil {
+		return nil, 0, err
+	}
+
+	return products, total, nil
+}
+
 // ProductCategory Repository
 type productCategoryRepository struct {
 	collection *mongo.Collection

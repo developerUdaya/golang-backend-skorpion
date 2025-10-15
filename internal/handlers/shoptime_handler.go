@@ -23,15 +23,15 @@ func NewShopTimeHandler(shopTimeService *services.ShopTimeService) *ShopTimeHand
 // RegisterRoutes registers the routes for shop time management
 func (h *ShopTimeHandler) RegisterRoutes(router *gin.RouterGroup, authMiddleware *middleware.AuthMiddleware) {
 	// Public routes
-	router.GET("/restaurants/:restaurant_id/shop-timing", h.GetShopTiming)
+	router.GET("/shop-timing/:restaurant_id", h.GetShopTiming)
 	router.GET("/time-groups/:group_id/products", h.GetProductsByTime)
 
 	// Protected routes
-	restaurant := router.Group("/restaurants/:restaurant_id", authMiddleware.AuthRequired(), authMiddleware.RestaurantRequired())
+	restaurant := router.Group("/shop-timing/:restaurant_id", authMiddleware.AuthRequired(), authMiddleware.RestaurantRequired())
 	{
 		// Shop timing routes
-		restaurant.PUT("/shop-timing", h.UpdateShopTiming)
-		restaurant.PUT("/shop-status", h.UpdateShopStatus)
+		restaurant.PUT("", h.UpdateShopTiming)
+		restaurant.PUT("/status", h.UpdateShopStatus)
 
 		// Time group routes
 		timeGroups := restaurant.Group("/time-groups")

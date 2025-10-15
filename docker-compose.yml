@@ -1,0 +1,140 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: golang-food-postgres
+    environment:
+      POSTGRES_DB: golang_food_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MongoDB Database
+  mongodb:
+    image: mongo:7.0
+    container_name: golang-food-mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin123
+      MONGO_INITDB_DATABASE: golang_food_db
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: golang-food-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass redis123
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis123", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Kafka (with Zookeeper)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: golang-food-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: golang-food-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+  # Go Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: golang-food-backend
+    ports:
+      - "8080:8080"
+    environment:
+      # Database Configuration
+      POSTGRES_URL: postgres://postgres:postgres123@postgres:5432/golang_food_db?sslmode=disable
+      
+      # MongoDB Configuration
+      MONGO_URL: mongodb://admin:admin123@mongodb:27017
+      MONGO_DB_NAME: golang_food_db
+      
+      # Redis Configuration
+      REDIS_URL: redis:6379
+      REDIS_PASSWORD: redis123
+      REDIS_DB: 0
+      
+      # Kafka Configuration
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_GROUP_ID: food-delivery-service
+      
+      # Server Configuration
+      SERVER_PORT: 8080
+      SERVER_HOST: 0.0.0.0
+      GIN_MODE: release
+      
+      # JWT Configuration
+      JWT_SECRET: your-super-secret-jwt-key-change-in-production
+      JWT_EXPIRY_HOURS: 24
+      
+      # Razorpay Configuration (Update with your credentials)
+      RAZORPAY_KEY_ID: rzp_test_key
+      RAZORPAY_KEY_SECRET: your_razorpay_secret
+      RAZORPAY_WEBHOOK_SECRET: your_webhook_secret
+      
+      # Porter Configuration (Update with your credentials)
+      PORTER_API_KEY: your_porter_api_key
+      PORTER_BASE_URL: https://pfe-apigw-uat.porter.in
+      
+      # SMS Configuration (Update with your credentials)
+      SMS_API_KEY: your-sms-api-key
+      SMS_SENDER_ID: your-sender-id
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs
+
+volumes:
+  postgres_data:
+  mongodb_data:
+  redis_data:

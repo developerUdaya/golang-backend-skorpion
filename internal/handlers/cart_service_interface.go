@@ -14,4 +14,6 @@ type CartServiceInterface interface {
 	ClearCart(ctx context.Context, userID string) error
 	ApplyCoupon(ctx context.Context, userID, couponCode string) (*services.CartResponse, error)
 	RemoveCoupon(ctx context.Context, userID string) (*services.CartResponse, error)
+	GetBillSummary(ctx context.Context, userID, restaurantID, addressID string) (*services.BillSummaryResponse, error)
+	Checkout(ctx context.Context, userID, restaurantID, addressID string) (*services.CheckoutResponse, error)
 }

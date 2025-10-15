@@ -318,3 +318,8 @@ For support and questions, please open an issue in the repository.
 
 **Note**: This is a production-ready backend system designed to handle high-scale food delivery operations with proper separation of concerns, caching strategies, and event-driven architecture.
 # golang-backend-skorpion
+
+
+
+//mac path - udaya
+export PATH="/usr/local/Cellar/docker/28.5.1/bin:$PATH" && docker-compose up -d app

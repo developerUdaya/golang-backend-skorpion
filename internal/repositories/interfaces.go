@@ -27,6 +27,7 @@ type UserRepository interface {
 type OTPRepository interface {
 	Create(ctx context.Context, otp *models.OTP) error
 	GetValidOTP(ctx context.Context, phone string, restaurantID uuid.UUID, otpCode string) (*models.OTP, error)
+	GetValidOTPWithOptionalRestaurant(ctx context.Context, phone string, restaurantID *uuid.UUID, otpCode string) (*models.OTP, error)
 	InvalidateOTP(ctx context.Context, id uuid.UUID) error
 	DeleteExpiredOTPs(ctx context.Context) error
 	IncrementAttempt(ctx context.Context, id uuid.UUID) error
@@ -83,6 +84,7 @@ type ProductRepository interface {
 	GetByCategoryID(ctx context.Context, categoryID primitive.ObjectID, limit, offset int) ([]models.Product, error)
 	Search(ctx context.Context, query string, restaurantID string, limit, offset int) ([]models.Product, error)
 	GetHighlighted(ctx context.Context, restaurantID string, highlightType string) ([]models.Product, error)
+	GetByRestaurantCategoryAndTime(ctx context.Context, restaurantID string, categoryID *primitive.ObjectID, availableOnly bool, currentTime string, limit, offset int) ([]models.Product, int64, error)
 }
 
 // ProductCategoryRepository interface for MongoDB category operations

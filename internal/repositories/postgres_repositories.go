@@ -714,6 +714,26 @@ func (r *otpRepository) GetValidOTP(ctx context.Context, phone string, restauran
 	return &otp, nil
 }
 
+func (r *otpRepository) GetValidOTPWithOptionalRestaurant(ctx context.Context, phone string, restaurantID *uuid.UUID, otpCode string) (*models.OTP, error) {
+	var otp models.OTP
+	query := r.db.WithContext(ctx).Where(
+		"phone = ? AND otp_code = ? AND expires_at > ? AND is_used = false AND attempt_count < ?",
+		phone, otpCode, time.Now(), 5, // Max 5 attempts
+	)
+
+	if restaurantID != nil {
+		query = query.Where("restaurant_id = ?", *restaurantID)
+	} else {
+		query = query.Where("restaurant_id IS NULL")
+	}
+
+	err := query.First(&otp).Error
+	if err != nil {
+		return nil, err
+	}
+	return &otp, nil
+}
+
 func (r *otpRepository) InvalidateOTP(ctx context.Context, id uuid.UUID) error {
 	return r.db.WithContext(ctx).Model(&models.OTP{}).Where("id = ?", id).Update("is_used", true).Error
 }

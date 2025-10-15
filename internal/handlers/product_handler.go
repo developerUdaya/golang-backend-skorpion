@@ -148,6 +148,50 @@ func (h *ProductHandler) GetProductByID(c *gin.Context) {
 	c.JSON(http.StatusOK, product)
 }
 
+// @Summary Get products by restaurant, category and time
+// @Description Get paginated products filtered by restaurant, category, availability and current time
+// @Tags products
+// @Produce json
+// @Param restaurant_id path string true "Restaurant ID"
+// @Param category_id query string false "Category ID filter"
+// @Param available_only query bool false "Show only available products (default: false)"
+// @Param page query int false "Page number (default: 1)"
+// @Param limit query int false "Items per page (default: 20, max: 100)"
+// @Success 200 {object} services.GetProductsResponse
+// @Failure 400 {object} map[string]string
+// @Router /api/v1/restaurants/{restaurant_id}/products/filtered [get]
+func (h *ProductHandler) GetProductsByRestaurantCategoryAndTime(c *gin.Context) {
+	restaurantID := c.Param("id")
+
+	// Parse query parameters
+	categoryID := c.Query("category_id")
+	availableOnly, _ := strconv.ParseBool(c.DefaultQuery("available_only", "false"))
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+
+	// Build request
+	req := &services.GetProductsRequest{
+		RestaurantID:  restaurantID,
+		CategoryID:    categoryID,
+		AvailableOnly: availableOnly,
+		Page:          page,
+		Limit:         limit,
+	}
+
+	// Get products from service
+	response, err := h.productService.GetProductsByRestaurantCategoryAndTime(c.Request.Context(), req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":         "Failed to retrieve products",
+			"details":       err.Error(),
+			"restaurant_id": restaurantID,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
 // @Summary Update product
 // @Description Update an existing product
 // @Tags products
@@ -399,6 +443,7 @@ func (h *ProductHandler) MoveProductsAndDeleteCategory(c *gin.Context) {
 func (h *ProductHandler) RegisterRoutes(router *gin.RouterGroup, authMiddleware *middleware.AuthMiddleware) {
 	// Public routes
 	router.GET("/restaurants/:id/products", h.GetProductsByRestaurant)
+	router.GET("/restaurants/:id/products/filtered", h.GetProductsByRestaurantCategoryAndTime)
 	router.GET("/restaurants/:id/products/search", h.SearchProducts)
 	router.GET("/restaurants/:id/categories", h.GetCategoriesByRestaurant)
 	router.GET("/products/:id", h.GetProductByID)

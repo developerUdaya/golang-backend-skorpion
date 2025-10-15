@@ -25,13 +25,10 @@ func NewDatabase(postgresURL, mongoURL, mongoDBName string) (*Database, error) {
 		return nil, fmt.Errorf("failed to connect to PostgreSQL: %v", err)
 	}
 
-	// Initialize MongoDB (but make it optional)
-	var mongoDB *mongo.Database
-	mongoDB, err = initMongoDB(mongoURL, mongoDBName)
+	// Initialize MongoDB
+	mongoDB, err := initMongoDB(mongoURL, mongoDBName)
 	if err != nil {
-		log.Printf("Warning: MongoDB connection failed: %v. Some features may not work.", err)
-		// Continue without MongoDB
-		mongoDB = nil
+		// return nil, fmt.Errorf("failed to connect to MongoDB: %v", err)
 	}
 
 	return &Database{

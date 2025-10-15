@@ -14,6 +14,7 @@ type ProductServiceInterface interface {
 	GetProductByID(ctx context.Context, productID string) (*models.Product, error)
 	UpdateProduct(ctx context.Context, productID, restaurantID string, updates map[string]interface{}) error
 	DeleteProduct(ctx context.Context, restaurantID, productID string) error
+	GetProductsByRestaurantCategoryAndTime(ctx context.Context, req *services.GetProductsRequest) (*services.GetProductsResponse, error)
 }
 
 // CategoryServiceInterface defines the contract for category service

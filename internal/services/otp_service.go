@@ -26,12 +26,14 @@ type OTPService struct {
 
 type SendOTPRequest struct {
 	Phone        string `json:"phone" binding:"required"`
-	RestaurantID string `json:"restaurant_id" binding:"required"`
+	Role         string `json:"role" binding:"required"` // Required to determine OTP flow
+	RestaurantID string `json:"restaurant_id"`           // Required only for customers
 }
 
 type VerifyOTPRequest struct {
 	Phone        string `json:"phone" binding:"required"`
-	RestaurantID string `json:"restaurant_id" binding:"required"`
+	Role         string `json:"role" binding:"required"` // Required to determine login flow
+	RestaurantID string `json:"restaurant_id"`           // Required only for customers
 	OTPCode      string `json:"otp_code" binding:"required"`
 }
 
@@ -64,10 +66,27 @@ func (s *OTPService) generateOTP() (string, error) {
 }
 
 func (s *OTPService) SendOTP(ctx context.Context, req *SendOTPRequest) (*OTPResponse, error) {
-	// Parse restaurant ID
-	restaurantID, err := uuid.Parse(req.RestaurantID)
-	if err != nil {
-		return nil, errors.New("invalid restaurant ID")
+	var restaurantID *uuid.UUID
+
+	// Validate role and restaurant ID requirements
+	if req.Role == "customer" {
+		if req.RestaurantID == "" {
+			return nil, errors.New("restaurant ID is required for customers")
+		}
+		parsedRestaurantID, err := uuid.Parse(req.RestaurantID)
+		if err != nil {
+			return nil, errors.New("invalid restaurant ID")
+		}
+		restaurantID = &parsedRestaurantID
+	} else {
+		// For non-customer roles, restaurant ID is optional
+		if req.RestaurantID != "" {
+			parsedRestaurantID, err := uuid.Parse(req.RestaurantID)
+			if err != nil {
+				return nil, errors.New("invalid restaurant ID")
+			}
+			restaurantID = &parsedRestaurantID
+		}
 	}
 
 	// Generate OTP
@@ -79,7 +98,7 @@ func (s *OTPService) SendOTP(ctx context.Context, req *SendOTPRequest) (*OTPResp
 	// Create OTP record
 	otp := &models.OTP{
 		Phone:        req.Phone,
-		RestaurantID: &restaurantID,
+		RestaurantID: restaurantID,
 		OTPCode:      otpCode,
 		ExpiresAt:    time.Now().Add(5 * time.Minute), // 5 minutes expiry
 		IsUsed:       false,
@@ -107,37 +126,77 @@ func (s *OTPService) SendOTP(ctx context.Context, req *SendOTPRequest) (*OTPResp
 }
 
 func (s *OTPService) VerifyOTPAndLogin(ctx context.Context, req *VerifyOTPRequest) (*AuthResponse, error) {
-	// Parse restaurant ID
-	restaurantID, err := uuid.Parse(req.RestaurantID)
-	if err != nil {
-		return nil, errors.New("invalid restaurant ID")
+	var restaurantID *uuid.UUID
+	var user *models.User
+	var err error
+
+	// Validate role and restaurant ID requirements
+	if req.Role == "customer" {
+		if req.RestaurantID == "" {
+			return nil, errors.New("restaurant ID is required for customer login")
+		}
+		parsedRestaurantID, err := uuid.Parse(req.RestaurantID)
+		if err != nil {
+			return nil, errors.New("invalid restaurant ID")
+		}
+		restaurantID = &parsedRestaurantID
+	} else {
+		// For non-customer roles, restaurant ID is optional
+		if req.RestaurantID != "" {
+			parsedRestaurantID, err := uuid.Parse(req.RestaurantID)
+			if err != nil {
+				return nil, errors.New("invalid restaurant ID")
+			}
+			restaurantID = &parsedRestaurantID
+		}
 	}
 
 	// Get valid OTP
-	otp, err := s.otpRepo.GetValidOTP(ctx, req.Phone, restaurantID, req.OTPCode)
+	otp, err := s.otpRepo.GetValidOTPWithOptionalRestaurant(ctx, req.Phone, restaurantID, req.OTPCode)
 	if err != nil {
 		return nil, errors.New("invalid or expired OTP")
 	}
 
-	// Check if user exists for this restaurant
-	user, err := s.userRepo.GetByPhoneAndRestaurant(ctx, req.Phone, restaurantID)
-	if err != nil {
-		// User doesn't exist, create a new user
-		user = &models.User{
-			Name:         fmt.Sprintf("User-%s", req.Phone[len(req.Phone)-4:]), // Use last 4 digits
-			Phone:        req.Phone,
-			Email:        "", // Email can be empty for OTP login
-			PasswordHash: "", // No password for OTP users
-			RestaurantID: &restaurantID,
-			Role:         "customer",
-			Status:       "active",
-			IsVerified:   true, // OTP verified means phone is verified
-			CreatedAt:    time.Now(),
-			UpdatedAt:    time.Now(),
+	// Role-based user lookup and creation logic
+	if req.Role == "customer" {
+		// For customers: check within restaurant
+		user, err = s.userRepo.GetByPhoneAndRestaurant(ctx, req.Phone, *restaurantID)
+		if err != nil {
+			// Customer doesn't exist, create a new customer
+			user = &models.User{
+				Name:         fmt.Sprintf("User-%s", req.Phone[len(req.Phone)-4:]), // Use last 4 digits
+				Phone:        req.Phone,
+				Email:        "", // Email can be empty for OTP login
+				PasswordHash: "", // No password for OTP users
+				RestaurantID: restaurantID,
+				Role:         "customer",
+				Status:       "active",
+				IsVerified:   true, // OTP verified means phone is verified
+				CreatedAt:    time.Now(),
+				UpdatedAt:    time.Now(),
+			}
+
+			if err := s.userRepo.Create(ctx, user); err != nil {
+				return nil, errors.New("failed to create user")
+			}
+		} else {
+			// Verify role matches
+			if user.Role != "customer" {
+				return nil, errors.New("invalid role for this login")
+			}
+		}
+	} else {
+		// For non-customer roles: global lookup
+		user, err = s.userRepo.GetByPhone(ctx, req.Phone)
+		if err != nil {
+			// Non-customer user doesn't exist - this should not be allowed for OTP
+			// Non-customers should be created through regular registration
+			return nil, errors.New("user not found. Please register first for non-customer roles")
 		}
 
-		if err := s.userRepo.Create(ctx, user); err != nil {
-			return nil, errors.New("failed to create user")
+		// Verify role matches
+		if user.Role != req.Role {
+			return nil, errors.New("invalid role for this login")
 		}
 	}
 

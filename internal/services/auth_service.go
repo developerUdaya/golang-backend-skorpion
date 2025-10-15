@@ -53,13 +53,14 @@ type RegisterRequest struct {
 	Phone        string `json:"phone" binding:"required"`
 	Password     string `json:"password" binding:"required,min=6"`
 	Role         string `json:"role"`
-	RestaurantID string `json:"restaurant_id" binding:"required"` // Required for multi-restaurant support
+	RestaurantID string `json:"restaurant_id"` // Required only for customers and restaurant staff
 }
 
 type LoginRequest struct {
 	Email        string `json:"email" binding:"required,email"`
 	Password     string `json:"password" binding:"required"`
-	RestaurantID string `json:"restaurant_id" binding:"required"` // Required for multi-restaurant support
+	Role         string `json:"role" binding:"required"` // Required to determine login flow
+	RestaurantID string `json:"restaurant_id"`           // Required only for customers
 }
 
 type AuthResponse struct {
@@ -71,33 +72,61 @@ type AuthResponse struct {
 }
 
 func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*AuthResponse, error) {
-	// Parse restaurant ID (required for multi-restaurant support)
-	restaurantID, err := uuid.Parse(req.RestaurantID)
-	if err != nil {
-		return nil, errors.New("invalid restaurant ID")
+	// Set default role
+	role := req.Role
+	if role == "" {
+		role = "customer"
 	}
 
-	// Check if user already exists within this restaurant
-	existingUser, _ := s.userRepo.GetByEmailAndRestaurant(ctx, req.Email, restaurantID)
-	if existingUser != nil {
-		return nil, errors.New("user with this email already exists in this restaurant")
-	}
+	var restaurantID *uuid.UUID
 
-	existingUserByPhone, _ := s.userRepo.GetByPhoneAndRestaurant(ctx, req.Phone, restaurantID)
-	if existingUserByPhone != nil {
-		return nil, errors.New("user with this phone already exists in this restaurant")
+	// Validate role and restaurant ID requirements
+	if role == "customer" {
+		if req.RestaurantID == "" {
+			return nil, errors.New("restaurant ID is required for customers")
+		}
+		parsedRestaurantID, err := uuid.Parse(req.RestaurantID)
+		if err != nil {
+			return nil, errors.New("invalid restaurant ID")
+		}
+		restaurantID = &parsedRestaurantID
+
+		// For customers: check uniqueness within restaurant
+		existingUser, _ := s.userRepo.GetByEmailAndRestaurant(ctx, req.Email, parsedRestaurantID)
+		if existingUser != nil {
+			return nil, errors.New("user with this email already exists in this restaurant")
+		}
+
+		existingUserByPhone, _ := s.userRepo.GetByPhoneAndRestaurant(ctx, req.Phone, parsedRestaurantID)
+		if existingUserByPhone != nil {
+			return nil, errors.New("user with this phone already exists in this restaurant")
+		}
+	} else {
+		// For non-customer roles: check global uniqueness
+		existingUser, _ := s.userRepo.GetByEmail(ctx, req.Email)
+		if existingUser != nil {
+			return nil, errors.New("user with this email already exists")
+		}
+
+		existingUserByPhone, _ := s.userRepo.GetByPhone(ctx, req.Phone)
+		if existingUserByPhone != nil {
+			return nil, errors.New("user with this phone already exists")
+		}
+
+		// For restaurant roles, restaurant ID is optional but can be provided
+		if req.RestaurantID != "" {
+			parsedRestaurantID, err := uuid.Parse(req.RestaurantID)
+			if err != nil {
+				return nil, errors.New("invalid restaurant ID")
+			}
+			restaurantID = &parsedRestaurantID
+		}
 	}
 
 	// Hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, err
-	}
-
-	// Set default role
-	role := req.Role
-	if role == "" {
-		role = "customer"
 	}
 
 	// Create user
@@ -107,7 +136,7 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Auth
 		Phone:        req.Phone,
 		PasswordHash: string(hashedPassword),
 		Role:         role,
-		RestaurantID: &restaurantID,
+		RestaurantID: restaurantID,
 		Status:       "active",
 		IsVerified:   false,
 		CreatedAt:    time.Now(),
@@ -119,7 +148,10 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Auth
 	}
 
 	// Generate token pair
-	restaurantIDStr := restaurantID.String()
+	restaurantIDStr := ""
+	if restaurantID != nil {
+		restaurantIDStr = restaurantID.String()
+	}
 
 	tokenPair, err := s.jwtManager.GenerateTokenPair(user.ID.String(), restaurantIDStr, user.Role, user.Email)
 	if err != nil {
@@ -141,16 +173,42 @@ func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*Auth
 }
 
 func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthResponse, error) {
-	// Parse restaurant ID (required for multi-restaurant support)
-	restaurantID, err := uuid.Parse(req.RestaurantID)
-	if err != nil {
-		return nil, errors.New("invalid restaurant ID")
-	}
+	var user *models.User
+	var err error
 
-	// Get user by email within specific restaurant
-	user, err := s.userRepo.GetByEmailAndRestaurant(ctx, req.Email, restaurantID)
-	if err != nil {
-		return nil, errors.New("invalid email or password")
+	// Role-based login logic
+	if req.Role == "customer" {
+		// For customers: require restaurant ID and check within restaurant
+		if req.RestaurantID == "" {
+			return nil, errors.New("restaurant ID is required for customer login")
+		}
+
+		restaurantID, err := uuid.Parse(req.RestaurantID)
+		if err != nil {
+			return nil, errors.New("invalid restaurant ID")
+		}
+
+		// Get user by email within specific restaurant
+		user, err = s.userRepo.GetByEmailAndRestaurant(ctx, req.Email, restaurantID)
+		if err != nil {
+			return nil, errors.New("invalid email or password")
+		}
+
+		// Verify role matches
+		if user.Role != "customer" {
+			return nil, errors.New("invalid role for this login")
+		}
+	} else {
+		// For non-customer roles: global lookup, no restaurant ID needed
+		user, err = s.userRepo.GetByEmail(ctx, req.Email)
+		if err != nil {
+			return nil, errors.New("invalid email or password")
+		}
+
+		// Verify role matches
+		if user.Role != req.Role {
+			return nil, errors.New("invalid role for this login")
+		}
 	}
 
 	if user.Status != "active" {

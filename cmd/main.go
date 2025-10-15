@@ -91,9 +91,10 @@ func main() {
 	razorpayService := services.NewRazorpayService(config.Razorpay.KeyID, config.Razorpay.KeySecret, config.Razorpay.WebhookSecret, paymentRepo, orderRepo, deliveryPartnerService)
 	// TODO: Uncomment when handlers are ready
 	refundService := services.NewRefundService(refundRepo, orderRepo, paymentRepo)
+	// TODO: Uncomment when handler is used: paymentService := services.NewPaymentService(paymentRepo, orderRepo, cartRepo)
 	couponService := services.NewCouponService(couponRepo)
 	addressService := services.NewAddressService(addressRepo)
-	cartService := services.NewCartService(cartRepo, productRepo, redisCache)
+	cartService := services.NewCartService(cartRepo, productRepo, orderRepo, paymentRepo, redisCache)
 	shoptimeService := services.NewShopTimeService(restaurantRepo, timeRangeProductRepo, productRepo, redisCache)
 
 	// Initialize middleware
@@ -113,6 +114,7 @@ func main() {
 	shoptimeHandler := handlers.NewShopTimeHandler(shoptimeService)
 
 	// Payment and delivery handlers
+	// TODO: Uncomment when RegisterRoutes is implemented: paymentHandler := handlers.NewPaymentHandler(paymentService)
 	razorpayHandler := handlers.NewRazorpayHandler(razorpayService)
 	porterHandler := handlers.NewPorterHandler(porterService, porterDeliveryRepo, orderRepo, deliveryPartnerService)
 
@@ -151,6 +153,7 @@ func main() {
 	shoptimeHandler.RegisterRoutes(api, authMiddleware)
 
 	// Payment and delivery routes
+	// TODO: Add paymentHandler.RegisterRoutes(api, authMiddleware) when RegisterRoutes is implemented
 	razorpayHandler.RegisterRoutes(api)
 	porterHandler.RegisterRoutes(api)
 

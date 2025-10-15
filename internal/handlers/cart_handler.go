@@ -39,6 +39,10 @@ func (h *CartHandler) RegisterRoutes(router *gin.RouterGroup, authMiddleware *mi
 		cart.POST("/coupons", h.ApplyCoupon)
 		// Remove coupon
 		cart.DELETE("/coupons", h.RemoveCoupon)
+		// Get bill summary
+		cart.GET("/bill-summary", h.GetBillSummary)
+		// Checkout cart
+		cart.POST("/checkout", h.Checkout)
 	}
 }
 
@@ -127,7 +131,6 @@ func (h *CartHandler) AddToCart(c *gin.Context) {
 	serviceReq := &services.AddToCartRequest{
 		ProductID: req.ProductID,
 		Quantity:  req.Quantity,
-		Price:     req.Price,
 	}
 
 	cart, err := h.cartService.AddToCart(ctx, uid, req.RestaurantID, serviceReq)
@@ -357,12 +360,113 @@ func (h *CartHandler) RemoveCoupon(c *gin.Context) {
 	c.JSON(http.StatusOK, cart)
 }
 
+// GetBillSummary godoc
+// @Summary Get bill summary for cart
+// @Description Get detailed bill summary including taxes, delivery charges, and coupons
+// @Tags cart
+// @Accept json
+// @Produce json
+// @Param restaurant_id query string true "Restaurant ID"
+// @Param address_id query string true "Delivery Address ID"
+// @Success 200 {object} services.BillSummaryResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Router /cart/bill-summary [get]
+func (h *CartHandler) GetBillSummary(c *gin.Context) {
+	// Get user ID from context
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{
+			Error:   "Unauthorized",
+			Message: "User ID not found",
+		})
+		return
+	}
+
+	uid := userID.(string)
+	restaurantID := c.Query("restaurant_id")
+	addressID := c.Query("address_id")
+
+	if restaurantID == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error:   "Restaurant ID is required",
+			Message: "Please provide restaurant_id parameter",
+		})
+		return
+	}
+
+	if addressID == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error:   "Address ID is required",
+			Message: "Please provide address_id parameter",
+		})
+		return
+	}
+
+	ctx := context.Background()
+	billSummary, err := h.cartService.GetBillSummary(ctx, uid, restaurantID, addressID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error:   "Failed to get bill summary",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, billSummary)
+}
+
+// Checkout godoc
+// @Summary Checkout cart
+// @Description Create order and payment records for cart checkout
+// @Tags cart
+// @Accept json
+// @Produce json
+// @Param checkout body CheckoutRequest true "Checkout data"
+// @Success 200 {object} services.CheckoutResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Router /cart/checkout [post]
+func (h *CartHandler) Checkout(c *gin.Context) {
+	var req CheckoutRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error:   "Invalid request body",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	// Get user ID from context
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{
+			Error:   "Unauthorized",
+			Message: "User ID not found",
+		})
+		return
+	}
+
+	uid := userID.(string)
+	ctx := context.Background()
+
+	checkoutResponse, err := h.cartService.Checkout(ctx, uid, req.RestaurantID, req.AddressID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error:   "Failed to checkout",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, checkoutResponse)
+}
+
 // Request and Response structs
 type AddToCartRequest struct {
-	ProductID    string  `json:"product_id" binding:"required"`
-	RestaurantID string  `json:"restaurant_id" binding:"required"`
-	Quantity     int     `json:"quantity" binding:"required,min=1"`
-	Price        float64 `json:"price" binding:"required,min=0"`
+	ProductID    string `json:"product_id" binding:"required"`
+	RestaurantID string `json:"restaurant_id" binding:"required"`
+	Quantity     int    `json:"quantity" binding:"required,min=1"`
 }
 
 type UpdateCartItemRequest struct {
@@ -372,6 +476,11 @@ type UpdateCartItemRequest struct {
 
 type ApplyCouponRequest struct {
 	CouponCode string `json:"coupon_code" binding:"required"`
+}
+
+type CheckoutRequest struct {
+	RestaurantID string `json:"restaurant_id" binding:"required"`
+	AddressID    string `json:"address_id" binding:"required"`
 }
 
 // ErrorResponse is defined in restaurant_handler.go
